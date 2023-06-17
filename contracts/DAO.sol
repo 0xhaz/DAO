@@ -151,10 +151,20 @@ contract DAO is Ownable {
         require(s_proposals[_proposalId].isOpen, "Proposal is not open");
         require(!s_hasVoted[msg.sender][_proposalId], "Already voted");
 
-        s_proposals[_proposalId].totalVotes += s_tokenWeight[msg.sender];
-        s_votes[msg.sender] += s_tokenWeight[msg.sender];
+        uint256 tokenBalance = s_tokenWeight[msg.sender];
+        uint256 stakingDuration = block.timestamp -
+            s_stakeTimestamp[msg.sender];
 
-        s_proposals[_proposalId].tokenWeight += s_tokenWeight[msg.sender];
+        // Calculate the time-weighted voting power based on token balance and staking duration
+        uint256 timeWeightedVotingPower = _calculateTimeWeightedVotingPower(
+            tokenBalance,
+            stakingDuration
+        );
+
+        s_proposals[_proposalId].totalVotes += timeWeightedVotingPower;
+        s_votes[msg.sender] += timeWeightedVotingPower;
+
+        s_proposals[_proposalId].tokenWeight += timeWeightedVotingPower;
         s_hasVoted[msg.sender][_proposalId] = true;
 
         emit VoteTokenWeighted(_proposalId, msg.sender);
