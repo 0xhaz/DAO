@@ -1,14 +1,16 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.9;
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/governance/Governor.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorCountingSimple.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorVotes.sol";
+import "@openzeppelin/contracts/governance/extensions/GovernorCountingSimple.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorVotesQuorumFraction.sol";
+import "@openzeppelin/contracts/governance/IGovernor.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorTimelockControl.sol";
+import "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
 
-contract Governance is
+contract GovernorContract is
+    IGovernor,
     Governor,
     GovernorSettings,
     GovernorCountingSimple,
@@ -16,34 +18,28 @@ contract Governance is
     GovernorVotesQuorumFraction,
     GovernorTimelockControl
 {
-    uint256 public s_proposalCount;
+    struct EachProposal {
+        uint256 proposalId;
+        string description;
+    }
+
+    uint256 public proposalNum;
+    mapping(uint256 => EachProposal) public allProposals;
+    mapping(uint256 => uint256) public proposalAmounts;
 
     constructor(
         IVotes _token,
         TimelockController _timelock,
-        uint256 _votingDelay,
+        uint256 _quorumPercentage,
         uint256 _votingPeriod,
-        uint256 _quorumPercentage
+        uint256 _votingDelay
     )
-        Governor("Governance")
-        GovernorSettings(
-            _votingDelay /* 1 block */,
-            _votingPeriod /* 1 hour => 300 blocks */,
-            0
-        )
+        Governor("GovernorContract")
+        GovernorSettings(_votingDelay, _votingPeriod, 0)
         GovernorVotes(_token)
         GovernorVotesQuorumFraction(_quorumPercentage)
         GovernorTimelockControl(_timelock)
-    {
-        s_proposalCount = 0;
-    }
-
-    function setQuorum(uint256 _quorumPercentage) external onlyGovernance {
-        require(_quorumPercentage <= 100, "Governance: quorumPercentage");
-        _quorumPercentage = _quorumPercentage;
-    }
-
-    // The following functions are overrides required by Solidity.
+    {}
 
     function votingDelay()
         public
@@ -52,6 +48,10 @@ contract Governance is
         returns (uint256)
     {
         return super.votingDelay();
+    }
+
+    function proposalAmount(uint256 proposalId) public view returns (uint256) {
+        return proposalAmounts[proposalId];
     }
 
     function votingPeriod()
@@ -74,12 +74,19 @@ contract Governance is
         return super.quorum(blockNumber);
     }
 
+    function getVotes(
+        address account,
+        uint256 blockNumber
+    ) public view override(IGovernor, Governor) returns (uint256) {
+        return super.getVotes(account, blockNumber);
+    }
+
     function state(
         uint256 proposalId
     )
         public
         view
-        override(Governor, GovernorTimelockControl)
+        override(Governor, IGovernor, GovernorTimelockControl)
         returns (ProposalState)
     {
         return super.state(proposalId);
@@ -91,8 +98,18 @@ contract Governance is
         bytes[] memory calldatas,
         string memory description
     ) public override(Governor, IGovernor) returns (uint256) {
-        s_proposalCount++;
-        return super.propose(targets, values, calldatas, description);
+        uint256 id = super.propose(targets, values, calldatas, description);
+        proposalNum++;
+        EachProposal storage proposal = allProposals[proposalNum];
+        proposal.proposalId = id;
+        proposal.description = description;
+        return id;
+    }
+
+    function getAllProposal(
+        uint256 _num
+    ) public view returns (EachProposal memory) {
+        return allProposals[_num];
     }
 
     function proposalThreshold()
@@ -134,11 +151,12 @@ contract Governance is
 
     function supportsInterface(
         bytes4 interfaceId
-    ) public view override(Governor, GovernorTimelockControl) returns (bool) {
+    )
+        public
+        view
+        override(Governor, IERC165, GovernorTimelockControl)
+        returns (bool)
+    {
         return super.supportsInterface(interfaceId);
-    }
-
-    function getNumberOfProposals() public view returns (uint256) {
-        return s_proposalCount;
     }
 }
