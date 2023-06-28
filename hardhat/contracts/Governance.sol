@@ -2,24 +2,31 @@
 pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/governance/Governor.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorCountingSimple.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorVotes.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorVotesQuorumFraction.sol";
 import "@openzeppelin/contracts/governance/extensions/GovernorTimelockControl.sol";
-import "./ProjectFund.sol";
+import "./interface/IProjectFund.sol";
+import "./interface/IGovernorSettings.sol";
 
 error GovernanceContract__NeedEntranceFee();
 
 contract GovernanceContract is
     Governor,
-    GovernorSettings,
     GovernorCountingSimple,
     GovernorVotes,
     GovernorVotesQuorumFraction,
     GovernorTimelockControl,
-    ProjectFund
+    IProjectFund,
+    IGovernorSettings
 {
+    IProjectFund public projectFund;
+    IGovernorSettings public governorSettings;
+
+    uint256 private s_votingDelay;
+    uint256 private s_votingPeriod;
+    uint256 private s_proposalThreshold;
+
     mapping(address => bool) public s_isEntranceFeePaid;
 
     constructor(
@@ -28,37 +35,35 @@ contract GovernanceContract is
         uint256 _votingDelay,
         uint256 _votingPeriod,
         uint256 _quorumPercentage,
-        uint256 _entranceFee,
-        uint256 _daoPercentage
+        address _projectFundAddress
     )
         Governor("GovernanceContract")
-        GovernorSettings(
-            _votingDelay /* 1 block */,
-            _votingPeriod /* 45818 blocks = ~1 week */,
-            0
-        )
         GovernorVotes(_token)
         GovernorVotesQuorumFraction(_quorumPercentage)
         GovernorTimelockControl(_timelock)
-        ProjectFund(_entranceFee, _daoPercentage)
-    {}
+    {
+        projectFund = IProjectFund(_projectFundAddress);
+        s_votingDelay = _votingDelay;
+        s_votingPeriod = _votingPeriod;
+        governorSettings = IGovernorSettings(this);
+    }
 
     function votingDelay()
         public
         view
-        override(IGovernor, GovernorSettings)
+        override(IGovernorSettings, IGovernor)
         returns (uint256)
     {
-        return super.votingDelay();
+        return s_votingDelay;
     }
 
     function votingPeriod()
         public
         view
-        override(IGovernor, GovernorSettings)
+        override(IGovernor, IGovernorSettings)
         returns (uint256)
     {
-        return super.votingPeriod();
+        return s_votingPeriod;
     }
 
     function quorum(
@@ -99,10 +104,10 @@ contract GovernanceContract is
     function proposalThreshold()
         public
         view
-        override(Governor, GovernorSettings)
+        override(Governor, IGovernorSettings)
         returns (uint256)
     {
-        return super.proposalThreshold();
+        return s_proposalThreshold;
     }
 
     function supportsInterface(

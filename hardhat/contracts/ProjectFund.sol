@@ -3,6 +3,7 @@ pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/KeeperCompatibleInterface.sol";
+import "./interface/IMultiSig.sol";
 // import "hardhat/console.sol";
 
 error ProjectFund__NotApprovedByDao();
@@ -17,6 +18,8 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
     uint256 private projectId = 1;
     uint256 private daoPercentage;
     uint256 private entranceFee;
+    address private multiSigWalletAddress;
+    IMultiSig private multiSigWallet;
 
     enum ProjectStatus {
         PENDING,
@@ -65,9 +68,14 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
         _;
     }
 
-    constructor(uint256 _entranceFee, uint256 _daoPercentage) {
+    constructor(
+        uint256 _entranceFee,
+        uint256 _daoPercentage,
+        address _multiSigWalletAddress
+    ) {
         daoPercentage = _daoPercentage;
         entranceFee = _entranceFee;
+        multiSigWallet = IMultiSig(_multiSigWalletAddress);
     }
 
     function fundProject(uint256 _projectId) external payable {
@@ -77,14 +85,27 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
         if (s_isApprovedByDao[_projectId] == false) {
             revert ProjectFund__NotApprovedByDao();
         }
-        s_fundersBalance[msg.sender][_projectId] += msg.value;
+
+        multiSigWallet.contribute{value: msg.value}(_projectId);
+
+        multiSigWallet.addProRataShare(msg.sender, msg.value);
+
         s_projects[_projectId].projectFunds += msg.value;
 
-        if (!_isFunderInProject(msg.sender, _projectId)) {
-            s_fundedProjects[msg.sender].push(_projectId);
+        if (
+            !_isFunderInProject(
+                s_projects[_projectId].projectOwnerAddress,
+                _projectId
+            )
+        ) {
+            s_fundedProjects[s_projects[_projectId].projectOwnerAddress].push(
+                _projectId
+            );
         }
 
-        s_fundedProjects[msg.sender] = [_projectId];
+        s_fundedProjects[s_projects[_projectId].projectOwnerAddress] = [
+            _projectId
+        ];
 
         emit ProjectFunded(_projectId);
     }
@@ -177,17 +198,19 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
     }
 
     function withdrawFunds(uint256 _projectId) external {
-        if (
-            s_projects[_projectId].projectStatus == ProjectStatus.FAILED ||
-            s_projects[_projectId].projectStatus == ProjectStatus.CANCELLED
-        ) revert ProjectFund__InvalidStatus();
+        if (s_projects[_projectId].projectStatus != ProjectStatus.SUCCESS)
+            revert ProjectFund__InvalidStatus();
 
-        uint256 funderBalance = s_fundersBalance[msg.sender][_projectId];
+        uint256 funderBalance = multiSigWallet.getFunderBalance(
+            msg.sender,
+            _projectId
+        );
+
         require(funderBalance > 0);
 
-        s_fundersBalance[msg.sender][_projectId] = 0;
+        multiSigWallet.withdrawFunds(_projectId, msg.sender);
 
-        _payTo(msg.sender, funderBalance);
+        s_projects[_projectId].projectFunds -= funderBalance;
 
         emit WithdrawFund(msg.sender, _projectId);
     }
@@ -212,7 +235,7 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
         uint256 _projectId,
         address _funder
     ) external view returns (uint256) {
-        return s_fundersBalance[_funder][_projectId];
+        return multiSigWallet.getFunderBalance(_funder, _projectId);
     }
 
     function getFundedProjects(

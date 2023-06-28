@@ -1,5 +1,3 @@
-const { ethers } = require("hardhat");
-
 const tokens = (n: number) => ethers.utils.parseEther(n.toString());
 
 const ether = tokens;
@@ -24,6 +22,10 @@ const VOTING_DELAY = 0;
 const VOTING_PERIOD = 50;
 const QUORUM_PERCENTAGE = 0;
 const ADDRESS_ZERO = "0x0000000000000000000000000000000000000000";
+const NEW_VALUE = 77;
+const FUNC = "store";
+const FUNC_FUND = "approveFundingByDao";
+const FUNC_CANCEL_APPROVAL = "cancelApproval";
 
 module.exports = {
   developmentChains,
