@@ -2,6 +2,7 @@
 pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/KeeperCompatibleInterface.sol";
 import "./interface/IMultiSig.sol";
 // import "hardhat/console.sol";
@@ -37,6 +38,11 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
         bool isProjectFunded;
     }
 
+    enum Tokens {
+        ETH,
+        ERC20
+    }
+
     mapping(uint256 => Project) private s_projects;
     mapping(bytes32 => uint256) private s_hashToProjectId;
     mapping(uint256 => bytes32) private s_idToHash;
@@ -47,12 +53,18 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
     mapping(uint256 => bool) private s_isProjectFunded;
     mapping(uint256 => uint256) private s_projectToTime;
     mapping(uint256 => uint256) private s_time;
+    mapping(address => Tokens) private s_tokenType;
 
     event ProjectFunded(uint256 indexed _projectId);
     event ProjectFailed(uint256 indexed _projectId);
     event EntranceFeePaid(address indexed _projectOwner);
     event ProjectGoesToFunding(uint256 indexed _projectId);
     event WithdrawFund(address indexed _investor, uint256 indexed _projectId);
+    event FundProject(
+        uint256 indexed _projectId,
+        uint256 _amount,
+        address indexed _funder
+    );
 
     modifier isApprovedByDao(uint256 _projectId) {
         if (!s_isApprovedByDao[projectId])
@@ -78,7 +90,11 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
         multiSigWallet = IMultiSig(_multiSigWalletAddress);
     }
 
-    function fundProject(uint256 _projectId) external payable {
+    function fundProject(
+        uint256 _projectId,
+        address _tokenAddress,
+        uint256 _amount
+    ) external payable {
         if (s_projects[_projectId].projectStatus != ProjectStatus.PENDING) {
             revert ProjectFund__InvalidStatus();
         }
@@ -86,11 +102,17 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
             revert ProjectFund__NotApprovedByDao();
         }
 
-        multiSigWallet.contribute{value: msg.value}(_projectId);
+        if (s_tokenType[_tokenAddress] == Tokens.ETH) {
+            _fundProjectWithEther(_amount, _projectId);
 
-        multiSigWallet.addProRataShare(msg.sender, msg.value);
+            multiSigWallet.addProRataShare(msg.sender, _amount, _projectId);
+            s_projects[_projectId].projectFunds += _amount;
+        } else if (s_tokenType[_tokenAddress] == Tokens.ERC20) {
+            _fundProjectWithTokens(_tokenAddress, _amount, _projectId);
 
-        s_projects[_projectId].projectFunds += msg.value;
+            multiSigWallet.addProRataShare(msg.sender, _amount, _projectId);
+            s_projects[_projectId].projectFunds += _amount;
+        }
 
         if (
             !_isFunderInProject(
@@ -102,10 +124,6 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
                 _projectId
             );
         }
-
-        s_fundedProjects[s_projects[_projectId].projectOwnerAddress] = [
-            _projectId
-        ];
 
         emit ProjectFunded(_projectId);
     }
@@ -268,6 +286,37 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
         return daoPercentage;
     }
 
+    function _fundProjectWithEther(
+        uint256 _amount,
+        uint256 _projectId
+    ) private {
+        if (
+            s_projects[_projectId].projectStatus != ProjectStatus.PENDING ||
+            !s_isApprovedByDao[_projectId]
+        ) revert ProjectFund__InvalidStatus();
+
+        s_projects[_projectId].projectFunds += _amount;
+        multiSigWallet.contributeEther{value: _amount}(_projectId, _projectId);
+
+        emit FundProject(_projectId, _amount, msg.sender);
+    }
+
+    function _fundProjectWithTokens(
+        address _tokenAddress,
+        uint256 _amount,
+        uint256 _projectId
+    ) private {
+        if (
+            s_projects[_projectId].projectStatus != ProjectStatus.PENDING ||
+            !s_isApprovedByDao[_projectId]
+        ) revert ProjectFund__InvalidStatus();
+
+        s_projects[_projectId].projectFunds += _amount;
+        multiSigWallet.contributeTokens(_tokenAddress, _projectId, _amount);
+
+        emit FundProject(_projectId, _amount, msg.sender);
+    }
+
     function _payTo(address _to, uint256 _amount) internal {
         (bool success, ) = (payable(_to)).call{value: _amount}("");
         if (!success) {
@@ -276,10 +325,10 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
     }
 
     function _isFunderInProject(
-        address _address,
+        address _funder,
         uint256 _projectId
     ) internal view returns (bool) {
-        uint256[] memory fundedProjects = s_fundedProjects[_address];
+        uint256[] memory fundedProjects = s_fundedProjects[_funder];
         for (uint256 i = 0; i < fundedProjects.length; i++) {
             if (fundedProjects[i] == _projectId) {
                 return true;

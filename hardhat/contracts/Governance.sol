@@ -8,6 +8,7 @@ import "@openzeppelin/contracts/governance/extensions/GovernorVotesQuorumFractio
 import "@openzeppelin/contracts/governance/extensions/GovernorTimelockControl.sol";
 import "./interface/IProjectFund.sol";
 import "./interface/IGovernorSettings.sol";
+import "./Staking.sol";
 
 error GovernanceContract__NeedEntranceFee();
 
@@ -22,6 +23,7 @@ contract GovernanceContract is
 {
     IProjectFund public projectFund;
     IGovernorSettings public governorSettings;
+    Staking public staking;
 
     uint256 private s_votingDelay;
     uint256 private s_votingPeriod;
@@ -35,7 +37,8 @@ contract GovernanceContract is
         uint256 _votingDelay,
         uint256 _votingPeriod,
         uint256 _quorumPercentage,
-        address _projectFundAddress
+        address _projectFundAddress,
+        address _stakingAddress
     )
         Governor("GovernanceContract")
         GovernorVotes(_token)
@@ -46,6 +49,7 @@ contract GovernanceContract is
         s_votingDelay = _votingDelay;
         s_votingPeriod = _votingPeriod;
         governorSettings = IGovernorSettings(this);
+        staking = Staking(_stakingAddress);
     }
 
     function votingDelay()
@@ -148,5 +152,13 @@ contract GovernanceContract is
         returns (address)
     {
         return super._executor();
+    }
+
+    function _getVotes(
+        address account,
+        uint256 /*timepoint */,
+        bytes memory
+    ) internal view override(GovernorVotes, Governor) returns (uint256) {
+        return staking.getMembershipVotingPower(account);
     }
 }

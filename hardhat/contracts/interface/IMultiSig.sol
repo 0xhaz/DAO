@@ -2,11 +2,27 @@
 pragma solidity ^0.8.17;
 
 interface IMultiSig {
-    function contribute(uint256) external payable;
+    function contributeEther(
+        uint256 amount,
+        uint256 projectId
+    ) external payable;
 
-    function withdrawFunds(uint256, address) external;
+    function contributeTokens(
+        address tokenAddress,
+        uint256 amount,
+        uint256 projectId
+    ) external payable;
 
-    function addProRataShare(address, uint256) external;
+    function withdrawFunds(uint256 projectId, address account) external;
 
-    function getFunderBalance(address, uint256) external view returns (uint256);
+    function addProRataShare(
+        address account,
+        uint256 share,
+        uint256 projectId
+    ) external;
+
+    function getFunderBalance(
+        address account,
+        uint256 projectId
+    ) external view returns (uint256);
 }

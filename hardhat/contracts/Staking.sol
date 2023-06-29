@@ -126,4 +126,10 @@ contract Staking {
     function getMembershipCount() external view returns (uint256) {
         return s_membershipCount;
     }
+
+    function getMembershipVotingPower(
+        address _account
+    ) public view returns (uint256) {
+        return s_memberships[_account].votingPower;
+    }
 }
