@@ -157,6 +157,97 @@ contract MultiSigWallet {
         );
     }
 
+    function getTotalShares(uint _projectId) external view returns (uint256) {
+        uint256 totalShares = 0;
+
+        for (uint256 i = 0; i < proRataShares.length; i++) {
+            ProRataShare memory share = proRataShares[i];
+            if (share.projectId == _projectId) {
+                totalShares += share.share;
+            }
+        }
+
+        return totalShares;
+    }
+
+    function getFundersCount(uint _projectId) external view returns (uint256) {
+        uint256 fundersCount = 0;
+
+        for (uint256 i = 0; i < contributions.length; i++) {
+            Contribution memory contribution = contributions[i];
+            if (contribution.projectId == _projectId) {
+                fundersCount++;
+            }
+        }
+
+        return fundersCount;
+    }
+
+    function getFunderContribution(
+        uint _projectId,
+        uint _index
+    ) external view returns (uint256) {
+        uint256 fundersCount = 0;
+
+        for (uint256 i = 0; i < contributions.length; i++) {
+            Contribution memory contribution = contributions[i];
+            if (contribution.projectId == _projectId) {
+                if (fundersCount == _index) {
+                    return contribution.amount;
+                }
+                fundersCount++;
+            }
+        }
+
+        return 0;
+    }
+
+    function getFunderShare(
+        address _funder,
+        uint _projectId
+    ) external view returns (uint256) {
+        uint256 totalShares = 0;
+        uint256 funderShares = 0;
+
+        for (uint256 i = 0; i < proRataShares.length; i++) {
+            ProRataShare memory share = proRataShares[i];
+            if (share.projectId == _projectId) {
+                totalShares += share.share;
+            }
+        }
+
+        for (uint256 i = 0; i < contributions.length; i++) {
+            Contribution memory contribution = contributions[i];
+            if (
+                contribution.projectId == _projectId &&
+                contribution.contributor == _funder
+            ) {
+                funderShares += contribution.amount;
+            }
+        }
+
+        return (funderShares * 100) / totalShares;
+    }
+
+    function getFunderAddress(
+        uint _projectId,
+        uint _index
+    ) external view returns (address) {
+        uint256 fundersCount = 0;
+
+        for (uint256 i = 0; i < contributions.length; i++) {
+            Contribution memory contribution = contributions[i];
+            if (contribution.projectId == _projectId) {
+                if (fundersCount == _index) {
+                    return contribution.contributor;
+                }
+                fundersCount++;
+            }
+        }
+
+        return address(0);
+    }
+
     /**
      *
      * @dev prepareTransaction: allows the project fund to prepare a transaction

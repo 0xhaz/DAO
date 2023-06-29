@@ -33,6 +33,7 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
         address projectOwnerAddress;
         uint256 projectFunds;
         uint256 goalAmount;
+        uint256 totalContributions;
         ProjectStatus projectStatus;
         bool isApprovedByDao;
         bool isProjectFunded;
@@ -47,6 +48,7 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
     mapping(bytes32 => uint256) private s_hashToProjectId;
     mapping(uint256 => bytes32) private s_idToHash;
     mapping(address => mapping(uint256 => uint256)) private s_fundersBalance;
+    mapping(uint256 => mapping(address => uint256)) private s_projectFunders;
     mapping(address => uint256[]) private s_fundedProjects;
     mapping(address => bool) private s_isEntranceFeePaid;
     mapping(uint256 => bool) private s_isApprovedByDao;
@@ -55,7 +57,11 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
     mapping(uint256 => uint256) private s_time;
     mapping(address => Tokens) private s_tokenType;
 
-    event ProjectFunded(uint256 indexed _projectId);
+    event ProjectFunded(
+        uint256 indexed _projectId,
+        address indexed _funder,
+        uint256 _amount
+    );
     event ProjectFailed(uint256 indexed _projectId);
     event EntranceFeePaid(address indexed _projectOwner);
     event ProjectGoesToFunding(uint256 indexed _projectId);
@@ -67,7 +73,7 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
     );
 
     modifier isApprovedByDao(uint256 _projectId) {
-        if (!s_isApprovedByDao[projectId])
+        if (!s_isApprovedByDao[_projectId])
             revert ProjectFund__NotApprovedByDao();
         _;
     }
@@ -90,42 +96,11 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
         multiSigWallet = IMultiSig(_multiSigWalletAddress);
     }
 
-    function fundProject(
-        uint256 _projectId,
-        address _tokenAddress,
-        uint256 _amount
-    ) external payable {
-        if (s_projects[_projectId].projectStatus != ProjectStatus.PENDING) {
-            revert ProjectFund__InvalidStatus();
-        }
-        if (s_isApprovedByDao[_projectId] == false) {
-            revert ProjectFund__NotApprovedByDao();
-        }
+    function payEntranceFee() external payable {
+        if (msg.value < entranceFee) revert ProjectFund__LowBalance();
+        s_isEntranceFeePaid[msg.sender] = true;
 
-        if (s_tokenType[_tokenAddress] == Tokens.ETH) {
-            _fundProjectWithEther(_amount, _projectId);
-
-            multiSigWallet.addProRataShare(msg.sender, _amount, _projectId);
-            s_projects[_projectId].projectFunds += _amount;
-        } else if (s_tokenType[_tokenAddress] == Tokens.ERC20) {
-            _fundProjectWithTokens(_tokenAddress, _amount, _projectId);
-
-            multiSigWallet.addProRataShare(msg.sender, _amount, _projectId);
-            s_projects[_projectId].projectFunds += _amount;
-        }
-
-        if (
-            !_isFunderInProject(
-                s_projects[_projectId].projectOwnerAddress,
-                _projectId
-            )
-        ) {
-            s_fundedProjects[s_projects[_projectId].projectOwnerAddress].push(
-                _projectId
-            );
-        }
-
-        emit ProjectFunded(_projectId);
+        emit EntranceFeePaid(msg.sender);
     }
 
     function createProject(
@@ -165,6 +140,122 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
         s_projects[_projectId].projectStatus = ProjectStatus.CANCELLED;
     }
 
+    function approvedByDao(uint256 _projectId) external {
+        if (s_projects[_projectId].projectStatus != ProjectStatus.PENDING)
+            revert ProjectFund__InvalidStatus();
+
+        s_isApprovedByDao[_projectId] = true;
+        s_projects[_projectId].isApprovedByDao = true;
+
+        if (
+            s_projects[_projectId].projectFunds >=
+            s_projects[_projectId].goalAmount
+        ) {
+            s_projects[_projectId].projectStatus = ProjectStatus.SUCCESS;
+        } else {
+            s_projects[_projectId].projectStatus = ProjectStatus.FAILED;
+        }
+    }
+
+    function fundProject(
+        uint256 _projectId,
+        address _tokenAddress,
+        uint256 _amount
+    ) external payable isApprovedByDao(_projectId) {
+        if (!s_isApprovedByDao[_projectId])
+            revert ProjectFund__NotApprovedByDao();
+        if (
+            s_projects[_projectId].projectStatus != ProjectStatus.SUCCESS &&
+            s_projects[_projectId].projectStatus != ProjectStatus.FAILED
+        ) {
+            revert ProjectFund__InvalidStatus();
+        }
+
+        if (s_tokenType[_tokenAddress] == Tokens.ETH) {
+            _fundProjectWithEther(_amount, _projectId);
+
+            multiSigWallet.addProRataShare(msg.sender, _amount, _projectId);
+            s_projects[_projectId].projectFunds += _amount;
+            s_projectFunders[_projectId][msg.sender] += _amount;
+            s_projects[_projectId].totalContributions += _amount;
+        } else if (s_tokenType[_tokenAddress] == Tokens.ERC20) {
+            _fundProjectWithTokens(_tokenAddress, _amount, _projectId);
+
+            multiSigWallet.addProRataShare(msg.sender, _amount, _projectId);
+            s_projects[_projectId].projectFunds += _amount;
+            s_projectFunders[_projectId][msg.sender] += _amount;
+            s_projects[_projectId].totalContributions += _amount;
+        }
+
+        if (
+            !_isFunderInProject(
+                s_projects[_projectId].projectOwnerAddress,
+                _projectId
+            )
+        ) {
+            s_fundedProjects[s_projects[_projectId].projectOwnerAddress].push(
+                _projectId
+            );
+        }
+
+        emit ProjectFunded(_projectId, msg.sender, _amount);
+    }
+
+    function withdrawFunds(
+        uint256 _projectId
+    ) external isApprovedByDao(_projectId) {
+        if (s_projects[_projectId].projectStatus != ProjectStatus.SUCCESS)
+            revert ProjectFund__InvalidStatus();
+
+        uint256 funderBalance = multiSigWallet.getFunderBalance(
+            msg.sender,
+            _projectId
+        );
+
+        require(funderBalance > 0);
+
+        multiSigWallet.withdrawFunds(_projectId, msg.sender);
+
+        s_projects[_projectId].projectFunds -= funderBalance;
+
+        emit WithdrawFund(msg.sender, _projectId);
+    }
+
+    function distributeTokensToFunders(
+        uint256 _projectId,
+        address _tokenAddress
+    ) external onlyOwnerOrProjectOwner(_projectId) {
+        if (s_projects[_projectId].projectStatus != ProjectStatus.SUCCESS)
+            revert ProjectFund__InvalidStatus();
+
+        uint256 projectFunds = s_projects[_projectId].projectFunds;
+        require(projectFunds > 0);
+
+        uint256 totalTokens = IERC20(_tokenAddress).balanceOf(address(this));
+        require(totalTokens > 0);
+
+        uint256 totalShares = multiSigWallet.getTotalShares(_projectId);
+        require(totalShares > 0);
+
+        for (
+            uint256 i = 0;
+            i < multiSigWallet.getFundersCount(_projectId);
+            i++
+        ) {
+            address funder = multiSigWallet.getFunderAddress(_projectId, i);
+            uint256 funderBalance = multiSigWallet.getFunderBalance(
+                funder,
+                _projectId
+            );
+
+            uint256 tokensToDistribute = (funderBalance * totalTokens) /
+                projectFunds;
+            require(tokensToDistribute > 0);
+
+            require(IERC20(_tokenAddress).transfer(funder, tokensToDistribute));
+        }
+    }
+
     function checkUpkeep(
         bytes calldata /* checkData */
     )
@@ -190,7 +281,10 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
 
         require(s_isProjectFunded[currentProjectId]);
         require(
-            s_projects[currentProjectId].projectStatus == ProjectStatus.PENDING
+            s_projects[currentProjectId].projectStatus ==
+                ProjectStatus.SUCCESS ||
+                s_projects[currentProjectId].projectStatus ==
+                ProjectStatus.FAILED
         );
 
         uint256 projectFunds = s_projects[currentProjectId].projectFunds;
@@ -202,35 +296,9 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
         _payTo(projectOwner, ownerAmount);
         _payTo(owner(), daoAmount);
 
-        s_projects[currentProjectId].projectStatus = ProjectStatus.SUCCESS;
         s_projects[currentProjectId].isProjectFunded = true;
 
-        emit ProjectFunded(currentProjectId);
-    }
-
-    function payEntranceFee() external payable {
-        if (msg.value < entranceFee) revert ProjectFund__LowBalance();
-        s_isEntranceFeePaid[msg.sender] = true;
-
-        emit EntranceFeePaid(msg.sender);
-    }
-
-    function withdrawFunds(uint256 _projectId) external {
-        if (s_projects[_projectId].projectStatus != ProjectStatus.SUCCESS)
-            revert ProjectFund__InvalidStatus();
-
-        uint256 funderBalance = multiSigWallet.getFunderBalance(
-            msg.sender,
-            _projectId
-        );
-
-        require(funderBalance > 0);
-
-        multiSigWallet.withdrawFunds(_projectId, msg.sender);
-
-        s_projects[_projectId].projectFunds -= funderBalance;
-
-        emit WithdrawFund(msg.sender, _projectId);
+        emit ProjectFunded(currentProjectId, projectOwner, projectFunds);
     }
 
     function getProjectDetails(
@@ -260,14 +328,6 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
         address _funder
     ) external view returns (uint256[] memory) {
         return s_fundedProjects[_funder];
-    }
-
-    function approvedByDao(uint256 _projectId) external onlyOwner {
-        if (s_projects[_projectId].projectStatus != ProjectStatus.PENDING)
-            revert ProjectFund__InvalidStatus();
-
-        s_isApprovedByDao[_projectId] = true;
-        s_projects[_projectId].isApprovedByDao = true;
     }
 
     function setDaoPercentage(uint256 _daoPercentage) external onlyOwner {
@@ -327,7 +387,7 @@ contract ProjectFund is Ownable, KeeperCompatibleInterface {
     function _isFunderInProject(
         address _funder,
         uint256 _projectId
-    ) internal view returns (bool) {
+    ) private view returns (bool) {
         uint256[] memory fundedProjects = s_fundedProjects[_funder];
         for (uint256 i = 0; i < fundedProjects.length; i++) {
             if (fundedProjects[i] == _projectId) {

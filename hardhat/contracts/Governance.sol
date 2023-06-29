@@ -30,6 +30,15 @@ contract GovernanceContract is
     uint256 private s_proposalThreshold;
 
     mapping(address => bool) public s_isEntranceFeePaid;
+    mapping(uint256 => mapping(address => bool)) private s_projectVoters;
+
+    modifier isApprovedVoter(uint256 _proposalId) {
+        require(
+            s_projectVoters[_proposalId][msg.sender],
+            "GovernanceContract: Not approved voter"
+        );
+        _;
+    }
 
     constructor(
         IVotes _token,
@@ -50,6 +59,10 @@ contract GovernanceContract is
         s_votingPeriod = _votingPeriod;
         governorSettings = IGovernorSettings(this);
         staking = Staking(_stakingAddress);
+    }
+
+    function registerVoter(uint256 _proposaId) external {
+        s_projectVoters[_proposaId][msg.sender] = true;
     }
 
     function votingDelay()
@@ -102,7 +115,15 @@ contract GovernanceContract is
             revert GovernanceContract__NeedEntranceFee();
         }
 
-        return super.propose(_targets, _values, _calldatas, _description);
+        uint256 proposalId = super.propose(
+            _targets,
+            _values,
+            _calldatas,
+            _description
+        );
+        s_projectVoters[proposalId][msg.sender] = true;
+
+        return proposalId;
     }
 
     function proposalThreshold()

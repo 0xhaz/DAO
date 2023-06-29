@@ -21,6 +21,15 @@ interface IMultiSig {
         uint256 projectId
     ) external;
 
+    function getTotalShares(uint256 projectId) external view returns (uint256);
+
+    function getFundersCount(uint256 projectId) external view returns (uint256);
+
+    function getFunderAddress(
+        uint256 projectId,
+        uint256 index
+    ) external view returns (address);
+
     function getFunderBalance(
         address account,
         uint256 projectId
